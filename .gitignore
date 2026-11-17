@@ -10,3 +10,8 @@ frontend/next-env.d.ts
 *.tsbuildinfo
 *.db-shm
 *.db-wal
+
+.ruff_cache/
+frontend/playwright-report/
+frontend/test-results/
+*.log
