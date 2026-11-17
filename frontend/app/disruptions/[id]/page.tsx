@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { LossHistogram, UrgencyCurve } from "@/components/charts";
 import { SeverityBadge, Stat, StatusBadge } from "@/components/ui";
+import { can, useMe } from "@/components/auth";
 import { ago, num, post, usd, usePoll } from "@/lib/api";
 
 const NODE_LABELS: Record<string, string> = {
@@ -183,6 +184,7 @@ function List({ title, items }: { title: string; items?: string[] }) {
 function ApprovalPanel({ d, onDone }: { d: any; onDone: () => void }) {
   const actionable = (d.options ?? []).filter((o: any) => o.kind !== "wait");
   const [optionId, setOptionId] = useState<string>(d.recommendation?.recommended_option_id);
+  const me = useMe();
   const [reviewer, setReviewer] = useState("");
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
@@ -196,6 +198,7 @@ function ApprovalPanel({ d, onDone }: { d: any; onDone: () => void }) {
     setBusy(true); setErr(null);
     try {
       try { localStorage.setItem("reviewer", reviewer); } catch {}
+      // With auth on, the server records the API key owner; `reviewer` is only used in unauthenticated dev.
       await post(`/api/disruptions/${d.id}/decision`, { approved, option_id: optionId, reviewer: reviewer || "planner", comment });
       onDone();
     } catch (e) {
@@ -221,11 +224,14 @@ function ApprovalPanel({ d, onDone }: { d: any; onDone: () => void }) {
         ))}
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        <input className="rounded border border-edge bg-ink px-2 py-1.5 text-sm" placeholder="Your name" value={reviewer} onChange={(e) => setReviewer(e.target.value)} />
+        {me?.auth_enabled
+          ? <span className="self-center text-sm text-muted">Deciding as <b className="text-slate-200">{me.name}</b></span>
+          : <input className="rounded border border-edge bg-ink px-2 py-1.5 text-sm" placeholder="Your name" value={reviewer} onChange={(e) => setReviewer(e.target.value)} />}
         <input className="min-w-64 flex-1 rounded border border-edge bg-ink px-2 py-1.5 text-sm" placeholder="Comment (optional)" value={comment} onChange={(e) => setComment(e.target.value)} />
-        <button className="btn-primary" disabled={busy} onClick={() => decide(true)}>Approve & execute</button>
-        <button className="btn-danger" disabled={busy} onClick={() => decide(false)}>Reject</button>
+        <button className="btn-primary" disabled={busy || !can(me, "approver")} onClick={() => decide(true)}>Approve & execute</button>
+        <button className="btn-danger" disabled={busy || !can(me, "approver")} onClick={() => decide(false)}>Reject</button>
       </div>
+      {me && !can(me, "approver") && <div className="mt-2 text-sm text-amber-300">Your role ({me.role}) cannot approve plans.</div>}
       {err && <div className="mt-2 text-sm text-rose-300">{err}</div>}
     </div>
   );

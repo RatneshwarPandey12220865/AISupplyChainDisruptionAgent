@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { SupplyMap } from "@/components/charts";
 import { Kpi, SeverityBadge, StatusBadge } from "@/components/ui";
+import { can, useMe } from "@/components/auth";
 import { ago, post, usd, usePoll } from "@/lib/api";
 
 const SCENARIO_LABELS: Record<string, string> = {
@@ -16,7 +17,8 @@ const SCENARIO_LABELS: Record<string, string> = {
 
 export default function ControlTower() {
   const { data: dash, error, refresh } = usePoll("/api/dashboard");
-  const { data: health } = usePoll("/api/health", 15000);
+  const { data: health } = usePoll("/api/status", 15000);
+  const me = useMe();
   const { data: disruptions, refresh: refreshList } = usePoll<any[]>("/api/disruptions");
   const { data: notes } = usePoll<any[]>("/api/notifications");
   const { data: suppliers } = usePoll<any[]>("/api/suppliers", 10000);
@@ -79,6 +81,7 @@ export default function ControlTower() {
         <Kpi label="Active risk signals" value={k.active_signals ?? "—"} />
       </div>
 
+      {me?.demo_mode && can(me, "approver") && (
       <div className="card">
         <div className="card-title">Inject a disruption (demo)</div>
         <div className="flex flex-wrap gap-2">
@@ -87,9 +90,12 @@ export default function ControlTower() {
               {busy === s ? "Sending…" : SCENARIO_LABELS[s] ?? s}
             </button>
           ))}
-          <button className="btn-danger ml-auto" disabled={!!busy} onClick={reset}>Reset demo data</button>
+          {me.admin_reset && can(me, "admin") && (
+            <button className="btn-danger ml-auto" disabled={!!busy} onClick={reset}>Reset demo data</button>
+          )}
         </div>
       </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="card lg:col-span-2">

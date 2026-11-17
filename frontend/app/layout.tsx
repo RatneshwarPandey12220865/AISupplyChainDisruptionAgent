@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AuthGate } from "@/components/auth";
 import "./globals.css";
+
+// Rendered per request so API_URL is read from the container environment at runtime (not baked at build).
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Supply Chain Control Tower",
@@ -14,9 +18,11 @@ const nav = [
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const config = JSON.stringify({ apiUrl: process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "" }).replace(/</g, "\\u003c");
   return (
     <html lang="en">
       <body className="min-h-screen font-sans antialiased">
+        <script dangerouslySetInnerHTML={{ __html: `window.__APP_CONFIG__=${config};` }} />
         <header className="sticky top-0 z-10 border-b border-edge bg-ink/90 backdrop-blur">
           <div className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
             <Link href="/" className="flex items-center gap-2 font-semibold">
@@ -30,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </nav>
           </div>
         </header>
-        <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+        <main className="mx-auto max-w-7xl px-4 py-6"><AuthGate>{children}</AuthGate></main>
       </body>
     </html>
   );
