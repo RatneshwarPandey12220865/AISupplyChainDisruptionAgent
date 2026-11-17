@@ -19,6 +19,7 @@ from app.db import session_scope
 from app.llm import structured_call
 from app.models import InventoryLevel, Product, Supplier, SupplierProduct, Warehouse
 from app.rag import search_contracts
+from app.services.quotes import remote_quote
 from app.simulation import Inbound, MonteCarloSimulator
 
 ENGAGE_DAYS = 0.25          # ~6h to place and confirm an order
@@ -27,12 +28,17 @@ ACT_WINDOWS_HOURS = [0, 6, 12, 24, 48, 72]
 
 
 def live_quote(session: Session, sp: SupplierProduct) -> dict:
-    """Current price/lead time. Stands in for a supplier pricing API: list price with a small intraday
-    drift plus a surcharge driven by active risk in the supplier's region."""
-    drift = random.Random(f"{sp.id}:{int(time.time() // 3600)}").uniform(-0.03, 0.04)
+    """Current price/lead time. Uses the supplier pricing API when SUPPLIER_QUOTE_URL is configured; otherwise
+    (or if it fails) a model: list price with a small intraday drift plus a surcharge driven by active risk
+    in the supplier's region."""
     risk = regional_risk(session, sp.supplier.region)
+    remote = remote_quote(sp.supplier_id, sp.supplier.name, sp.supplier.region, sp.product.sku)
+    if remote:
+        return {**remote, "regional_risk": risk, "source": "supplier_api"}
+    drift = random.Random(f"{sp.id}:{int(time.time() // 3600)}").uniform(-0.03, 0.04)
     return {"unit_price": round(sp.unit_price * (1 + drift + 0.25 * risk), 4),
-            "lead_time_days": round(sp.lead_time_days * (1 + 0.5 * risk), 1), "regional_risk": risk}
+            "lead_time_days": round(sp.lead_time_days * (1 + 0.5 * risk), 1), "regional_risk": risk,
+            "source": "model"}
 
 
 def _round_up(qty: float, step: int = 50) -> float:

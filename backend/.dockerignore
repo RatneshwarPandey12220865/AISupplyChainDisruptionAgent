@@ -1,5 +1,10 @@
 .venv
 __pycache__
+*.pyc
 *.db
-tests
+*.db-shm
+*.db-wal
 .pytest_cache
+tests
+loadtest
+.ruff_cache

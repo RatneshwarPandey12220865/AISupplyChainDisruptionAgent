@@ -75,7 +75,8 @@ def human_review_node(state: AgentState) -> dict:
     if approved and option_id not in valid:
         raise ValueError(f"Unknown option {option_id!r}")
     decision = {"approved": approved, "option_id": option_id, "reviewer": answer.get("reviewer", "planner"),
-                "comment": answer.get("comment", "")}
+                "comment": answer.get("comment", ""), "reviewer_role": answer.get("reviewer_role", ""),
+                "decided_at": answer.get("decided_at", "")}
     with session_scope() as s:
         record(s, state["disruption_id"], "human_review",
                f"{'Approved' if approved else 'Rejected'} by {decision['reviewer']}"

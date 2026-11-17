@@ -59,7 +59,7 @@ class OrderCreated(BaseModel):
 class Decision(BaseModel):
     approved: bool
     option_id: Optional[str] = Field(default=None, description="Override the recommended option")
-    reviewer: str = "planner"
+    reviewer: str = Field(default="", description="Ignored when auth is enabled: the API key owner is recorded")
     comment: str = ""
 
 

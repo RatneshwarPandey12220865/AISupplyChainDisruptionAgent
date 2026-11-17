@@ -6,7 +6,7 @@ from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import Base, engine, init_db, session_scope
+from app.db import drop_everything, init_db, session_scope
 from app.models import (CustomerOrder, InventoryLevel, Product, Shipment, Supplier, SupplierDelivery,
                         SupplierProduct, Warehouse, utcnow)
 from app.rag import add_contract
@@ -177,7 +177,7 @@ def seed(session: Session) -> bool:
 
 
 def reset_database() -> None:
-    Base.metadata.drop_all(engine)
+    drop_everything()
     init_db()
     with session_scope() as s:
         seed(s)

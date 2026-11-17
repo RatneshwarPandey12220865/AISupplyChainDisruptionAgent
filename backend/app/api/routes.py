@@ -1,6 +1,12 @@
 """Dashboard queries, HITL approvals, ERP receipts, post-mortems and demo scenarios."""
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+import json
+import logging
+import time
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -9,13 +15,17 @@ from app.api import schemas
 from app.config import settings
 from app.db import get_session, session_scope
 from app.events import make_event
+from app.metrics import SSE_CLIENTS
+from app.security import Principal, api_rate_limit, require
 from app.models import (CustomerOrder, Disruption, EventLog, ExternalSignal, InventoryLevel, Notification,
                         Product, PurchaseOrder, Shipment, Supplier, SupplierProduct, SupplierScoreHistory, utcnow)
 from app.seed import SCENARIOS, reset_database
 from app.services.postmortem import receive_purchase_order, run_postmortem
 from app.worker import ingest
 
-router = APIRouter(prefix="/api")
+log = logging.getLogger(__name__)
+# Every route here needs at least a viewer key (auth runs first so the rate limiter can key on the user).
+router = APIRouter(prefix="/api", dependencies=[Depends(require("viewer")), Depends(api_rate_limit)])
 OPEN = ("analyzing", "awaiting_approval", "auto_executed", "approved_executed", "monitoring")
 
 
@@ -32,12 +42,22 @@ def disruption_brief(d: Disruption) -> dict:
             "created_at": _iso(d.created_at), "updated_at": _iso(d.updated_at)}
 
 
-@router.get("/health")
-def health():
-    return {"status": "ok", "llm": settings.deepseek_model if settings.llm_enabled else "fallback (no DEEPSEEK_API_KEY)",
+@router.get("/me")
+def me(principal: Principal = Depends(require("viewer"))):
+    """Who am I? Lets the dashboard validate a pasted API key and decide which buttons to show."""
+    return {"name": principal.name, "role": principal.role, "auth_enabled": settings.auth_enabled,
+            "demo_mode": settings.seed_enabled, "admin_reset": settings.admin_reset_enabled}
+
+
+@router.get("/status")
+def status():
+    return {"llm": settings.deepseek_model if settings.llm_enabled else "fallback (no DEEPSEEK_API_KEY)",
             "database": "postgres" if settings.is_postgres else "sqlite",
             "event_bus": "redis" if settings.redis_url else "memory",
-            "auto_approve_limit": settings.auto_approve_limit}
+            "environment": settings.environment, "auto_approve_limit": settings.auto_approve_limit,
+            "erp": settings.erp_flavor if settings.erp_webhook_url else "not configured",
+            "quotes": "supplier_api" if settings.supplier_quote_url else "model",
+            "embeddings": settings.embedding_provider}
 
 
 @router.get("/dashboard")
@@ -84,7 +104,7 @@ def get_disruption(did: int, s: Session = Depends(get_session)):
 
 
 @router.post("/disruptions/{did}/decision")
-async def decide(did: int, body: schemas.Decision):
+async def decide(did: int, body: schemas.Decision, principal: Principal = Depends(require("approver"))):
     def _thread():
         with session_scope() as s:
             d = s.get(Disruption, did)
@@ -95,13 +115,19 @@ async def decide(did: int, body: schemas.Decision):
     if not await run_in_threadpool(is_waiting, thread_id):
         raise HTTPException(409, "Disruption is not awaiting approval")
     try:
-        return await run_in_threadpool(resume, thread_id, body.model_dump())
+        decision = body.model_dump()
+        # Identity comes from the authenticated key, never from the request body (audit-grade attribution).
+        decision["reviewer"] = principal.name if settings.auth_enabled else (body.reviewer or principal.name)
+        decision["reviewer_role"] = principal.role
+        decision["decided_at"] = _iso(utcnow())
+        return await run_in_threadpool(resume, thread_id, decision)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/disruptions/{did}/resolve")
-def resolve(did: int, body: schemas.Resolve, s: Session = Depends(get_session)):
+def resolve(did: int, body: schemas.Resolve, s: Session = Depends(get_session),
+            principal: Principal = Depends(require("approver"))):
     d = s.get(Disruption, did)
     if not d:
         raise HTTPException(404, "Disruption not found")
@@ -116,7 +142,7 @@ def po_dict(p: PurchaseOrder) -> dict:
             "product": p.product.sku, "warehouse": p.warehouse.code if p.warehouse else None,
             "quantity": p.quantity, "unit_price": p.unit_price, "total_cost": p.total_cost,
             "expected_days": p.expected_days, "actual_days": p.actual_days, "status": p.status,
-            "disruption_id": p.disruption_id, "erp_ref": p.erp_ref, "created_at": _iso(p.created_at),
+            "disruption_id": p.disruption_id, "erp_ref": p.erp_ref, "erp_status": p.erp_status, "created_at": _iso(p.created_at),
             "received_at": _iso(p.received_at)}
 
 
@@ -126,7 +152,8 @@ def purchase_orders(s: Session = Depends(get_session)):
 
 
 @router.post("/purchase-orders/{po_id}/receive")
-def receive(po_id: int, body: schemas.Receive, s: Session = Depends(get_session)):
+def receive(po_id: int, body: schemas.Receive, s: Session = Depends(get_session),
+            principal: Principal = Depends(require("approver"))):
     try:
         return po_dict(receive_purchase_order(s, po_id, body.actual_days))
     except ValueError as exc:
@@ -195,7 +222,9 @@ def events(s: Session = Depends(get_session)):
 
 
 @router.post("/simulate/{scenario}")
-async def simulate(scenario: str):
+async def simulate(scenario: str, principal: Principal = Depends(require("approver"))):
+    if not settings.seed_enabled:
+        raise HTTPException(404, "Demo scenarios are disabled (SEED_DEMO_DATA is off)")
     if scenario not in SCENARIOS:
         raise HTTPException(404, f"Unknown scenario; choose from {list(SCENARIOS)}")
     type_, payload = SCENARIOS[scenario]
@@ -204,6 +233,49 @@ async def simulate(scenario: str):
 
 
 @router.post("/admin/reset")
-async def reset():
+async def reset(principal: Principal = Depends(require("admin"))):
+    """Wipes and re-seeds the database. Admin-only and disabled unless ALLOW_ADMIN_RESET (default: dev only)."""
+    if not settings.admin_reset_enabled:
+        raise HTTPException(403, "Database reset is disabled in this environment")
+    log.warning("Database reset requested by %s", principal.name)
     await run_in_threadpool(reset_database)
     return {"status": "reset"}
+
+
+def _change_token() -> str:
+    """Cheap fingerprint of 'something changed' that works across processes (API and workers share the DB)."""
+    with session_scope() as s:
+        parts = [
+            s.execute(select(func.max(Disruption.updated_at), func.count(Disruption.id))).one(),
+            s.scalar(select(func.max(EventLog.id))), s.scalar(select(func.max(Notification.id))),
+            s.execute(select(func.max(PurchaseOrder.id), func.count(PurchaseOrder.id))
+                      .where(PurchaseOrder.status == "received")).one(),
+            s.scalar(select(func.max(PurchaseOrder.id))), s.scalar(select(func.max(ExternalSignal.id))),
+            s.scalar(select(func.max(SupplierScoreHistory.id))),
+        ]
+    return json.dumps(parts, default=str)
+
+
+@router.get("/stream")
+async def stream(request: Request):
+    """Server-Sent Events: emits `change` whenever the database moved, so the UI refetches instead of blind
+    polling. Clients connect with fetch() + an Authorization header (EventSource can't send headers)."""
+    async def gen():
+        SSE_CLIENTS.inc()
+        last, last_beat = None, time.monotonic()
+        try:
+            yield "retry: 3000\n\n"
+            while not await request.is_disconnected():
+                token = await run_in_threadpool(_change_token)
+                now = time.monotonic()
+                if token != last:
+                    last, last_beat = token, now
+                    yield f"event: change\ndata: {json.dumps({'at': _iso(utcnow())})}\n\n"
+                elif now - last_beat > 15:
+                    last_beat = now
+                    yield ": keepalive\n\n"
+                await asyncio.sleep(settings.sse_poll_seconds)
+        finally:
+            SSE_CLIENTS.dec()
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

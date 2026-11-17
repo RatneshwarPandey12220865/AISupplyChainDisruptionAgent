@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.config import settings
 from app.db import Base
 
-EMBED_DIM = 384
+EMBED_DIM = settings.embed_dim
 
 if settings.is_postgres:
     from pgvector.sqlalchemy import Vector
@@ -121,6 +121,8 @@ class Shipment(Base):
     carrier: Mapped[str] = mapped_column(String(80), default="")
     vessel: Mapped[str] = mapped_column(String(80), default="")
     route_region: Mapped[str] = mapped_column(String(80), default="")
+    # Carrier-side identifier used by the live trackers: IMO/MMSI for ocean, flight ident for air.
+    tracking_ref: Mapped[str] = mapped_column(String(80), default="")
     supplier: Mapped[Supplier] = relationship()
     product: Mapped[Product] = relationship()
     warehouse: Mapped[Warehouse] = relationship()
@@ -158,6 +160,10 @@ class PurchaseOrder(Base):
     status: Mapped[str] = mapped_column(String(20), default="submitted")  # submitted | received | cancelled
     disruption_id: Mapped[Optional[int]] = mapped_column(ForeignKey("disruptions.id"), index=True)
     erp_ref: Mapped[str] = mapped_column(String(80), default="")
+    # ERP sync outbox: not_configured | pending | synced | failed (pending rows are retried in the background)
+    erp_status: Mapped[str] = mapped_column(String(20), default="not_configured", index=True)
+    erp_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    erp_last_error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     received_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     actual_days: Mapped[Optional[float]] = mapped_column(Float)
@@ -221,9 +227,10 @@ class EventLog(Base):
     type: Mapped[str] = mapped_column(String(60), index=True)
     source: Mapped[str] = mapped_column(String(60), default="")
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
-    status: Mapped[str] = mapped_column(String(20), default="queued")  # queued | processed | failed
+    status: Mapped[str] = mapped_column(String(20), default="queued")  # queued | processing | processed | failed
     result: Mapped[dict] = mapped_column(JSON, default=dict)
     received_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)  # set when a worker starts processing
 
 
 class TelemetryReading(Base):
@@ -272,3 +279,17 @@ class SupplierScoreHistory(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     disruption_id: Mapped[Optional[int]] = mapped_column(ForeignKey("disruptions.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class LLMUsage(Base):
+    """One row per LLM call: feeds the daily budget guard and cost reporting."""
+    __tablename__ = "llm_usage"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    model: Mapped[str] = mapped_column(String(80), default="")
+    schema_name: Mapped[str] = mapped_column(String(80), default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    latency_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)
