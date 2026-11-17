@@ -1,7 +1,17 @@
 """Central configuration, loaded from environment variables / .env files."""
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+
+
+def redact_url(url: str) -> str:
+    """Hide the password in a connection URL so it is safe to log."""
+    try:
+        return make_url(url).render_as_string(hide_password=True)
+    except Exception:
+        return "<unparseable url>"
 
 
 class Settings(BaseSettings):
@@ -112,9 +122,31 @@ class Settings(BaseSettings):
     def llm_enabled(self) -> bool:
         return bool(self.deepseek_api_key.strip())
 
+    @field_validator("database_url")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        """Hosted providers (Supabase, Neon, ...) hand out plain postgres:// or postgresql:// URLs; this project
+        uses the psycopg 3 driver, so rewrite them."""
+        v = v.strip()
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix):]
+        return v
+
     @property
     def is_postgres(self) -> bool:
         return self.database_url.startswith("postgresql")
+
+    @property
+    def is_pooled(self) -> bool:
+        """True for a transaction-mode pooler (Supabase/PgBouncer on port 6543). Such connections cannot use
+        server-side prepared statements or session-level advisory locks."""
+        if not self.is_postgres:
+            return False
+        try:
+            return make_url(self.database_url).port == 6543
+        except Exception:
+            return False
 
     @property
     def is_production(self) -> bool:

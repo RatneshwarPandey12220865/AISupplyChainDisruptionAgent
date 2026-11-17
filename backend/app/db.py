@@ -19,7 +19,12 @@ log = logging.getLogger(__name__)
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 _MIGRATION_LOCK_ID = 727_274_001
 
-_connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+if settings.database_url.startswith("sqlite"):
+    _connect_args = {"check_same_thread": False}
+elif settings.is_pooled:
+    _connect_args = {"prepare_threshold": None}  # transaction pooler: no server-side prepared statements
+else:
+    _connect_args = {}
 engine = create_engine(settings.database_url, connect_args=_connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
@@ -102,8 +107,12 @@ def init_db() -> None:
 
     lock_conn = None
     if settings.is_postgres:
-        lock_conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-        lock_conn.execute(text("SELECT pg_advisory_lock(:id)"), {"id": _MIGRATION_LOCK_ID})
+        if settings.is_pooled:
+            log.warning("DATABASE_URL uses a transaction pooler (port 6543): the migration advisory lock is skipped. "
+                        "Start the API first and workers afterwards, or use the session pooler / direct URL (5432).")
+        else:
+            lock_conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+            lock_conn.execute(text("SELECT pg_advisory_lock(:id)"), {"id": _MIGRATION_LOCK_ID})
         for ext in ("vector", "timescaledb"):
             try:
                 with engine.begin() as conn:

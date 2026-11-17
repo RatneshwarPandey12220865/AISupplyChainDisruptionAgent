@@ -36,7 +36,7 @@ def _checkpointer():
 
         conninfo = settings.database_url.replace("postgresql+psycopg://", "postgresql://")
         pool = ConnectionPool(conninfo, max_size=10, open=True,
-                              kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row})
+                              kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row})
         saver = PostgresSaver(pool)
     else:
         from langgraph.checkpoint.sqlite import SqliteSaver

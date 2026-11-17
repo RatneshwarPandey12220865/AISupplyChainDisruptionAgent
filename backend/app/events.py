@@ -6,7 +6,7 @@ import uuid
 from abc import ABC, abstractmethod
 from typing import Awaitable, Callable
 
-from app.config import settings
+from app.config import redact_url, settings
 from app.models import utcnow
 
 log = logging.getLogger(__name__)
@@ -100,8 +100,11 @@ async def get_bus() -> EventBus:
                 bus = RedisStreamBus(settings.redis_url)
                 await bus.ping()
                 _bus = bus
-                log.info("Event bus: Redis Streams at %s", settings.redis_url)
+                log.info("Event bus: Redis Streams at %s", redact_url(settings.redis_url))
             except Exception as exc:
+                if settings.is_production:
+                    # An in-memory bus per process would silently drop events between the API and the workers.
+                    raise RuntimeError(f"Redis unreachable at {redact_url(settings.redis_url)}: {exc}") from exc
                 log.warning("Redis unavailable (%s); falling back to in-memory bus", exc)
         if _bus is None:
             _bus = InMemoryBus()

@@ -164,6 +164,25 @@ frontend as `API_URL`; no rebuild per domain) and `CORS_ORIGINS` must be your da
 Production mode (`ENVIRONMENT=production`) refuses to boot without API keys (≥16 chars) and a webhook secret, rejects
 `CORS_ORIGINS=*`, hides `/docs`, and turns demo seeding and `/api/admin/reset` off.
 
+## Supabase (Postgres) + hosted Redis
+
+Use this instead of the bundled Postgres/Redis containers.
+
+1. **Supabase**: create a project, then *Connect* → copy the **session pooler** string (port 5432). Put it in `.env` as
+   `DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require`
+   (`postgresql://` is rewritten for psycopg 3; URL-encode special characters in the password). `pgvector` is enabled
+   automatically by the first migration. Supabase has **no TimescaleDB**: the `telemetry_readings` table is created as a
+   plain table (logged as a warning, harmless at this scale). The transaction pooler (port 6543) also works, but
+   the migration lock is skipped, so start the API before the workers on first boot.
+2. **Redis**: Supabase does not offer Redis. Use Upstash, Redis Cloud or similar with **Streams** support and set
+   `REDIS_URL=rediss://default:<password>@<host>:6379` (`rediss://` = TLS). In production the app refuses to start if Redis
+   is unreachable, rather than silently falling back to a per-process in-memory bus.
+3. Run only the app services: `docker compose -f docker-compose.cloud.yml up -d --build` (same required secrets, plus
+   `DATABASE_URL` and `REDIS_URL`).
+
+For a local (non-Docker) run against Supabase, put the same two variables in `backend/.env` and start as in step 2 above.
+Use a separate Supabase project for development: the first start creates the schema, and `ALLOW_ADMIN_RESET` drops tables.
+
 ## Configuration highlights
 
 | Area | Variables |

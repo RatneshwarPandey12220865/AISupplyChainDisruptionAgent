@@ -1,0 +1,45 @@
+# App services only, for use with HOSTED Postgres (Supabase) and HOSTED Redis (Upstash / Redis Cloud / etc.).
+# DATABASE_URL and REDIS_URL come from .env. Run with:
+#     docker compose -f docker-compose.cloud.yml up -d --build
+# Like docker-compose.yml, only the frontend and API are published (127.0.0.1 by default) - put a TLS proxy in front.
+services:
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment: &backend-env
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env (Supabase connection string)}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL in .env (use rediss:// for TLS)}
+      API_KEYS: ${API_KEYS:?set API_KEYS in .env (name:key:role,...)}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?set WEBHOOK_SECRET in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      ALLOW_ADMIN_RESET: ${ALLOW_ADMIN_RESET:-false}
+      LOG_FORMAT: json
+      RUN_EMBEDDED_WORKER: "false"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=4)"]
+      interval: 10s
+      retries: 30
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    environment:
+      <<: *backend-env
+      WORKER_METRICS_PORT: "9101"
+    depends_on:
+      api: { condition: service_healthy }
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    environment:
+      API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    ports: ["${BIND_ADDRESS:-127.0.0.1}:3000:3000"]
+    depends_on: [api]
