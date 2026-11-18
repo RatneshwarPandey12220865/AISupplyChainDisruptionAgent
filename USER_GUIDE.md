@@ -220,6 +220,23 @@ future plans trust a supplier more or less based on how it really performed.
 - **Real use:** problems arrive by themselves from your ERP, suppliers, trackers, sensors, weather and news. The demo
   buttons are hidden in production mode, and your job is just to review and approve.
 
+### Loading demo data for a presentation
+
+To fill a demo database with sample users and a realistic spread of disruptions (some auto-executed, some approved
+and finished with a post-mortem, one rejected, a few still waiting for you to approve live):
+
+```bash
+cd backend
+python -m app.demo_data all            # sample users + scenarios
+python -m app.demo_data users          # only the sample accounts (prints the password once)
+python -m app.demo_data scenarios      # only the disruptions (add --force to run again on a non-empty database)
+```
+
+It uses the real pipeline, so with a DeepSeek key the summaries are genuinely AI-written (a few cents). The sample
+accounts are `anita.admin` (admin), `arjun.approver` and `priya.approver` (approvers) and `vikram.viewer` and
+`sara.viewer` (viewers), all with the password printed by the script (or the `DEMO_USER_PASSWORD` you set). The
+approvals in the history are attributed to those named users. **Only run it against a demo database.**
+
 ## 9. Cautions
 
 - **"Reset demo data" deletes data.** If the app is connected to Supabase, that erases real rows in your database.
