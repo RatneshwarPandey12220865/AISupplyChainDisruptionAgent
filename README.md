@@ -1,5 +1,8 @@
 # AI Supply Chain Disruption Agent
 
+> **New to the app?** Read the plain-language **[User Guide](USER_GUIDE.md)**: what it does, what the AI does, how to sign in,
+> and a full worked example from alarm to approval. This README is for setup, configuration and deployment.
+
 An event-driven, multi-agent system that ingests supply-chain telemetry, detects disruptions, quantifies
 their impact with Monte Carlo simulation, evaluates mitigations, and either **auto-executes** low-risk
 recovery plans or **halts for human approval**. Built with LangGraph and **DeepSeek** (through its
@@ -16,15 +19,15 @@ Ingestion (FastAPI, signed webhooks) ──> Event bus (Redis Streams | in-memor
   Background: post-mortems + supplier scoring · signal expiry · ERP outbox · weather/news/carrier polling · MQTT bridge
 ```
 
-| Layer | Implementation |
-|---|---|
-| Agent orchestration | LangGraph `StateGraph`, durable checkpoints (`PostgresSaver` / `SqliteSaver`), `interrupt()` for HITL |
-| LLM | DeepSeek (`deepseek-chat`) via `langchain-openai`, JSON-mode outputs validated by Pydantic, metered + daily budget cap |
-| API | FastAPI: API-key auth with roles, HMAC-signed webhooks, rate limiting, SSE live updates, Prometheus `/metrics` |
-| Relational + time series | PostgreSQL + TimescaleDB hypertable for telemetry (SQLite for local dev), **Alembic** migrations |
-| Vector search (RAG) | pgvector over supplier contracts/SLAs; pluggable embedding provider (offline hash or OpenAI-compatible) |
-| Queue / state | Redis Streams consumer groups with idempotent event claiming (in-memory fallback) |
-| UI | Next.js 15 + Tailwind CSS v4, sign-in, live updates over SSE |
+| Layer                    | Implementation                                                                                                             |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Agent orchestration      | LangGraph `StateGraph`, durable checkpoints (`PostgresSaver` / `SqliteSaver`), `interrupt()` for HITL              |
+| LLM                      | DeepSeek (`deepseek-chat`) via `langchain-openai`, JSON-mode outputs validated by Pydantic, metered + daily budget cap |
+| API                      | FastAPI: API-key auth with roles, HMAC-signed webhooks, rate limiting, SSE live updates, Prometheus `/metrics`           |
+| Relational + time series | PostgreSQL + TimescaleDB hypertable for telemetry (SQLite for local dev), **Alembic** migrations                     |
+| Vector search (RAG)      | pgvector over supplier contracts/SLAs; pluggable embedding provider (offline hash or OpenAI-compatible)                    |
+| Queue / state            | Redis Streams consumer groups with idempotent event claiming (in-memory fallback)                                          |
+| UI                       | Next.js 15 + Tailwind CSS v4, sign-in, live updates over SSE                                                               |
 
 ## The agents
 
@@ -203,29 +206,29 @@ Use a separate Supabase project for development: the first start creates the sch
 
 ## Configuration highlights
 
-| Area | Variables |
-|---|---|
-| Auth | `API_KEYS` (`name:key:role`), `WEBHOOK_SECRET`, `WEBHOOK_ALLOW_PLAIN_SECRET`, `WEBHOOK_MAX_SKEW_SECONDS` |
-| Safety | `SEED_DEMO_DATA`, `ALLOW_ADMIN_RESET`, `RATE_LIMIT_PER_MINUTE`, `INGEST_RATE_LIMIT_PER_MINUTE` |
-| LLM cost | `LLM_DAILY_BUDGET_USD`, `LLM_DAILY_TOKEN_BUDGET`, `LLM_PRICE_PER_M_INPUT_USD`, `LLM_PRICE_PER_M_OUTPUT_USD` |
-| RAG | `EMBEDDING_PROVIDER` (`hash`/`openai`), `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY`, `EMBEDDING_MODEL`, `EMBED_DIM` |
-| Pricing | `SUPPLIER_QUOTE_URL`, `SUPPLIER_QUOTE_API_KEY` |
-| ERP | `ERP_WEBHOOK_URL`, `ERP_FLAVOR` (`generic`/`sap`/`netsuite`), `ERP_AUTH_HEADER`, `ERP_AUTH_VALUE`, `ERP_MAX_ATTEMPTS` |
-| Feeds | `ENABLE_TRACKING_POLLING`, `FLIGHTAWARE_API_KEY`, `VESSEL_TRACKING_URL/_API_KEY/_ETA_FIELD`, `MQTT_URL`, `ENABLE_EXTERNAL_POLLING` |
-| Ops | `LOG_FORMAT=json`, `METRICS_TOKEN`, `WORKER_METRICS_PORT` |
+| Area     | Variables                                                                                                                                    |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth     | `API_KEYS` (`name:key:role`), `WEBHOOK_SECRET`, `WEBHOOK_ALLOW_PLAIN_SECRET`, `WEBHOOK_MAX_SKEW_SECONDS`                           |
+| Safety   | `SEED_DEMO_DATA`, `ALLOW_ADMIN_RESET`, `RATE_LIMIT_PER_MINUTE`, `INGEST_RATE_LIMIT_PER_MINUTE`                                       |
+| LLM cost | `LLM_DAILY_BUDGET_USD`, `LLM_DAILY_TOKEN_BUDGET`, `LLM_PRICE_PER_M_INPUT_USD`, `LLM_PRICE_PER_M_OUTPUT_USD`                          |
+| RAG      | `EMBEDDING_PROVIDER` (`hash`/`openai`), `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY`, `EMBEDDING_MODEL`, `EMBED_DIM`              |
+| Pricing  | `SUPPLIER_QUOTE_URL`, `SUPPLIER_QUOTE_API_KEY`                                                                                           |
+| ERP      | `ERP_WEBHOOK_URL`, `ERP_FLAVOR` (`generic`/`sap`/`netsuite`), `ERP_AUTH_HEADER`, `ERP_AUTH_VALUE`, `ERP_MAX_ATTEMPTS`        |
+| Feeds    | `ENABLE_TRACKING_POLLING`, `FLIGHTAWARE_API_KEY`, `VESSEL_TRACKING_URL/_API_KEY/_ETA_FIELD`, `MQTT_URL`, `ENABLE_EXTERNAL_POLLING` |
+| Ops      | `LOG_FORMAT=json`, `METRICS_TOKEN`, `WORKER_METRICS_PORT`                                                                              |
 
 ## Ingestion API
 
 All `/api/ingest/*` calls need a webhook signature (or an approver/admin API key) when `WEBHOOK_SECRET` is set.
 
-| Endpoint | Event | Example body |
-|---|---|---|
-| `POST /api/ingest/erp/inventory` | `inventory.update` | `{"sku":"CON-USBC","warehouse":"DAL","on_hand":1200}` |
-| `POST /api/ingest/erp/order` | `order.created` | `{"order_number":"ORD-9","customer":"X","is_vip":true,"sku":"MCU-32","warehouse":"DAL","quantity":500,"due_date":"2026-10-01T00:00:00"}` |
-| `POST /api/ingest/supplier` | `supplier.update` | `{"supplier_id":3,"sku":"PSU-65W","lead_time_days":26}` or `{"supplier_id":5,"status":"force_majeure"}` |
-| `POST /api/ingest/shipment/eta` | `shipment.eta_update` | `{"shipment_code":"SHP-1002","delay_days":10}` |
-| `POST /api/ingest/telemetry` | `telemetry.reading` | `{"shipment_code":"SHP-1006","metric":"temperature_c","value":47.5}` |
-| `POST /api/ingest/external` | `external.signal` | `{"kind":"strike","region":"Europe","severity":0.6}` |
+| Endpoint                           | Event                   | Example body                                                                                                                               |
+| ---------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /api/ingest/erp/inventory` | `inventory.update`    | `{"sku":"CON-USBC","warehouse":"DAL","on_hand":1200}`                                                                                    |
+| `POST /api/ingest/erp/order`     | `order.created`       | `{"order_number":"ORD-9","customer":"X","is_vip":true,"sku":"MCU-32","warehouse":"DAL","quantity":500,"due_date":"2026-10-01T00:00:00"}` |
+| `POST /api/ingest/supplier`      | `supplier.update`     | `{"supplier_id":3,"sku":"PSU-65W","lead_time_days":26}` or `{"supplier_id":5,"status":"force_majeure"}`                                |
+| `POST /api/ingest/shipment/eta`  | `shipment.eta_update` | `{"shipment_code":"SHP-1002","delay_days":10}`                                                                                           |
+| `POST /api/ingest/telemetry`     | `telemetry.reading`   | `{"shipment_code":"SHP-1006","metric":"temperature_c","value":47.5}`                                                                     |
+| `POST /api/ingest/external`      | `external.signal`     | `{"kind":"strike","region":"Europe","severity":0.6}`                                                                                     |
 
 Dashboard API (API key, `X-API-Key` or `Authorization: Bearer`): `GET /api/me`, `/api/status`, `/api/dashboard`,
 `/api/disruptions`, `/api/stream` (SSE) and more (see `/docs` in development). Actions: `POST /api/disruptions/{id}/decision`
