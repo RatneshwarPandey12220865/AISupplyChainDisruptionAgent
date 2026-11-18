@@ -1,8 +1,9 @@
 """Authentication, authorisation, webhook verification and rate limiting.
 
-* Dashboard / approver API: `X-API-Key: <key>` (or `Authorization: Bearer <key>`). Keys come from API_KEYS as
-  `name:key:role` and the *name* becomes the audited identity (e.g. the reviewer on an approval).
-  Roles are ordered viewer < approver < admin.
+* Dashboard / approver API: either an API key (`X-API-Key: <key>` or `Authorization: Bearer <key>`; keys come from
+  API_KEYS as `name:key:role`) or a login session token from POST /api/auth/login (`Authorization: Bearer scs_...`).
+  The key *name* / the *username* becomes the audited identity (e.g. the reviewer on an approval).
+  Roles are ordered viewer < approver < admin. Admins create user accounts; the bootstrap admin is an API key.
 * Ingestion webhooks: HMAC-SHA256 signature over the raw body (`X-Signature: sha256=<hex>`), optionally bound to a
   timestamp (`X-Timestamp`, signed as `"<ts>.<body>"`) to stop replays, or the plain secret in `X-Webhook-Secret`.
 * With no API_KEYS / WEBHOOK_SECRET configured and ENVIRONMENT=development everything is open (local convenience);
@@ -28,12 +29,14 @@ ROLE_RANK = {"viewer": 1, "approver": 2, "admin": 3}
 class Principal:
     name: str
     role: str
+    kind: str = "api_key"  # api_key | session | dev
+    token_hash: str | None = None  # set for session logins (used by logout / change-password)
 
     def at_least(self, role: str) -> bool:
         return ROLE_RANK[self.role] >= ROLE_RANK[role]
 
 
-DEV_PRINCIPAL = Principal("dev-user", "admin")
+DEV_PRINCIPAL = Principal("dev-user", "admin", kind="dev")
 
 
 def _extract_key(request: Request) -> str:
@@ -53,10 +56,30 @@ def lookup_key(key: str) -> Principal | None:
     return found
 
 
+def lookup_session_token(token: str) -> Principal | None:
+    from app.db import session_scope
+    from app.users import lookup_session
+
+    with session_scope() as s:
+        found = lookup_session(s, token)
+    return Principal(found[0].username, found[0].role, kind="session", token_hash=found[1]) if found else None
+
+
 def authenticate(request: Request) -> Principal:
     if not settings.auth_enabled:
         return DEV_PRINCIPAL
-    principal = lookup_key(_extract_key(request))
+    from app.users import SESSION_PREFIX
+
+    credential = _extract_key(request)
+    if credential.startswith(SESSION_PREFIX):  # a username/password login session
+        principal = lookup_session_token(credential)
+        if principal is None:
+            AUTH_FAILURES.labels("session").inc()
+            raise HTTPException(401, "Session expired or invalid; please sign in again",
+                                headers={"WWW-Authenticate": "Bearer"})
+        request.state.principal = principal
+        return principal
+    principal = lookup_key(credential)
     if principal is None:
         AUTH_FAILURES.labels("api_key").inc()
         raise HTTPException(401, "Missing or invalid API key", headers={"WWW-Authenticate": "Bearer"})
@@ -94,15 +117,34 @@ class RateLimiter:
         return True
 
 
+    # Failure-only counting (used for login throttling): check first, record only when the attempt failed.
+    def blocked(self, key: str, limit: int, window: float = 300.0) -> bool:
+        now = time.monotonic()
+        q = self.hits[key]
+        while q and now - q[0] > window:
+            q.popleft()
+        return len(q) >= limit
+
+    def hit(self, key: str) -> None:
+        self.hits[key].append(time.monotonic())
+
+    def reset(self, key: str) -> None:
+        self.hits.pop(key, None)
+
+
 limiter = RateLimiter()
+
+
+def client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?")
 
 
 def client_id(request: Request) -> str:
     principal = getattr(request.state, "principal", None)
     if principal:
         return f"user:{principal.name}"
-    fwd = request.headers.get("x-forwarded-for", "")
-    return "ip:" + (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?"))
+    return "ip:" + client_ip(request)
 
 
 def rate_limit(scope: str, per_minute_attr: str):

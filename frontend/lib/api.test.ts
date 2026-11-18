@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, apiUrl, authHeaders, AUTH_EVENT, parseSse, setApiKey, getApiKey } from "./api";
+import {
+  api, apiUrl, authHeaders, AUTH_EVENT, clearCredentials, getApiKey, getSession, loginWithPassword, parseSse, setApiKey,
+  setSession,
+} from "./api";
 
 describe("parseSse", () => {
   it("parses complete events and keeps the partial tail", () => {
@@ -36,6 +39,36 @@ describe("api client", () => {
     setApiKey("secret-key");
     expect(getApiKey()).toBe("secret-key");
     expect(authHeaders({ A: "b" })).toEqual({ A: "b", "X-API-Key": "secret-key" });
+  });
+
+  it("sends a session token as a Bearer header and prefers it over an API key", () => {
+    setApiKey("secret-key");
+    setSession("scs_token123");
+    expect(getSession()).toBe("scs_token123");
+    expect(authHeaders()).toEqual({ Authorization: "Bearer scs_token123" });
+    clearCredentials();
+    expect(authHeaders()).toEqual({});
+  });
+
+  it("stores the session after a password login and never keeps the password", async () => {
+    window.__APP_CONFIG__ = { apiUrl: "http://api" };
+    setApiKey("old-key");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ token: "scs_abc", user: { username: "alice", role: "approver" } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = await loginWithPassword("alice", "pw-pw-pw-pw-pw");
+    expect(user).toEqual({ username: "alice", role: "approver" });
+    expect(getSession()).toBe("scs_abc");
+    expect(getApiKey()).toBe(""); // the API key is replaced by the session
+    expect(JSON.stringify(Object.entries(localStorage))).not.toContain("pw-pw");
+    expect(fetchMock.mock.calls[0][0]).toBe("http://api/api/auth/login");
+  });
+
+  it("surfaces a failed login as a typed error without storing a session", async () => {
+    window.__APP_CONFIG__ = { apiUrl: "http://api" };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "Invalid username or password" }), { status: 401 })));
+    await expect(loginWithPassword("alice", "nope-nope-nope")).rejects.toMatchObject({ status: 401, message: "Invalid username or password" });
+    expect(getSession()).toBe("");
   });
 
   it("raises an auth event and a typed error on 401", async () => {

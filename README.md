@@ -104,8 +104,25 @@ API_KEYS=alice:alice-secret-key-123456:approver,bob:bob-secret-key-1234567:viewe
 WEBHOOK_SECRET=local-webhook-secret
 ```
 
-- `viewer` can read, `approver` can approve/reject/receive/resolve/inject demo scenarios, `admin` can also reset the demo DB.
-- Approvals record the **API key's owner** (e.g. `alice`) as the reviewer; the request body can't spoof it.
+- `viewer` can read, `approver` can approve/reject/receive/resolve/inject demo scenarios, `admin` can also reset the demo DB
+  and manage users.
+- Approvals record the **signed-in identity** (the API key's name or the username) as the reviewer; the request body can't spoof it.
+
+#### Username + password accounts
+
+People sign in with a **username and password**; API keys are for the bootstrap admin, scripts and integrations.
+There is **no public sign-up** (this tool approves purchase orders), so an admin creates accounts:
+
+1. Sign in once with your **admin API key** (on the sign-in screen choose *Sign in with an API key instead*). That is the
+   bootstrap admin, and it stays available as the recovery path if everyone is locked out.
+2. Open **Users** (top right), add your own account (pick the `admin` role) and any teammates.
+3. Sign out and sign in with your username and password from then on.
+
+Details: passwords are stored as salted **scrypt** hashes (min 10 characters); sign-in returns a revocable server-side
+session (12 h, `SESSION_TTL_HOURS`) and only a hash of the token is stored; disabling a user, resetting their password or
+logging out ends their sessions; repeated failed sign-ins lock that username for 5 minutes (`LOGIN_MAX_FAILURES`); changing
+a role takes effect immediately. Users can change their own password under **Account**. API: `POST /api/auth/login`,
+`POST /api/auth/logout`, `POST /api/auth/password`, and (admin) `GET/POST /api/users`, `PATCH /api/users/{id}`.
 
 Send a signed webhook:
 
@@ -133,7 +150,8 @@ cd backend && .venv\Scripts\python -m ruff check app tests migrations
 cd frontend && npm run typecheck && npm test
 
 # End-to-end (Playwright): start the backend with keys, the frontend, then:
-#   backend/.env or env:  API_KEYS=alice:e2e-approver-key-0123456789:approver,vic:e2e-viewer-key-0123456789:viewer
+#   backend/.env or env:  API_KEYS=alice:e2e-approver-key-0123456789:approver,vic:e2e-viewer-key-0123456789:viewer,root:e2e-admin-key-0123456789:admin
+#   (use a throwaway DATABASE_URL: the admin test creates a user account)
 cd frontend && npx playwright install chromium && npm run test:e2e
 
 # Load test (needs a running API): pip install locust

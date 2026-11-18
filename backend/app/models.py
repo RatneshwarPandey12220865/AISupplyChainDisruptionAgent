@@ -24,6 +24,29 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+class User(Base):
+    """Dashboard account (username + password). Created by an admin; the bootstrap admin comes from API_KEYS."""
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), default="viewer")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class UserSession(Base):
+    """Server-side login session. Only a SHA-256 of the token is stored, so a database leak cannot be replayed."""
+    __tablename__ = "user_sessions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class Supplier(Base):
     __tablename__ = "suppliers"
     id: Mapped[int] = mapped_column(primary_key=True)

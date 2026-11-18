@@ -45,7 +45,8 @@ def disruption_brief(d: Disruption) -> dict:
 @router.get("/me")
 def me(principal: Principal = Depends(require("viewer"))):
     """Who am I? Lets the dashboard validate a pasted API key and decide which buttons to show."""
-    return {"name": principal.name, "role": principal.role, "auth_enabled": settings.auth_enabled,
+    return {"name": principal.name, "role": principal.role, "auth_method": principal.kind,
+            "auth_enabled": settings.auth_enabled,
             "demo_mode": settings.seed_enabled, "admin_reset": settings.admin_reset_enabled}
 
 

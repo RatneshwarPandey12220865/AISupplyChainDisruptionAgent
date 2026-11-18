@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     webhook_secret: str = ""
     webhook_allow_plain_secret: bool = True
     webhook_max_skew_seconds: int = 300  # when X-Timestamp is sent it must be this fresh (replay protection)
+    session_ttl_hours: int = 12  # dashboard login sessions (username + password)
+    password_min_length: int = 10
+    login_max_failures: int = 8  # failed logins per username per 5 minutes before it is temporarily locked
     seed_demo_data: bool | None = None  # None -> on in development, off in production
     allow_admin_reset: bool | None = None  # None -> on in development, off in production
     rate_limit_per_minute: int = 600  # per client (API key or IP) for API calls; 0 disables

@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 node_modules/
 .next/
+.next-e2e/
 frontend/next-env.d.ts
 *.tsbuildinfo
 *.db-shm

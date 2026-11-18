@@ -9,7 +9,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import metrics
-from app.api import ingest, routes
+from app.api import auth, ingest, routes
 from app.config import settings
 from app.db import init_db, session_scope
 from app.events import get_bus
@@ -45,7 +45,7 @@ app = FastAPI(title="AI Supply Chain Disruption Agent", version="1.1.0", lifespa
               docs_url=None if settings.is_production else "/docs",
               redoc_url=None, openapi_url=None if settings.is_production else "/openapi.json")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
-                   allow_methods=["GET", "POST", "OPTIONS"],
+                   allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
                    allow_headers=["Content-Type", "Authorization", "X-API-Key", "Idempotency-Key"],
                    expose_headers=["X-Request-ID"])
 
@@ -89,5 +89,7 @@ def prometheus(request: Request):
 
 
 app.include_router(public)
+app.include_router(auth.router)
+app.include_router(auth.admin)
 app.include_router(ingest.router)
 app.include_router(routes.router)

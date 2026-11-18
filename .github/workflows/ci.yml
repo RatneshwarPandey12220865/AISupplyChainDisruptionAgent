@@ -64,6 +64,7 @@ jobs:
     env:
       E2E_APPROVER_KEY: e2e-approver-key-0123456789
       E2E_VIEWER_KEY: e2e-viewer-key-0123456789
+      E2E_ADMIN_KEY: e2e-admin-key-0123456789
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -74,7 +75,7 @@ jobs:
       - name: Start backend
         working-directory: backend
         env:
-          API_KEYS: alice:e2e-approver-key-0123456789:approver,vic:e2e-viewer-key-0123456789:viewer
+          API_KEYS: alice:e2e-approver-key-0123456789:approver,vic:e2e-viewer-key-0123456789:viewer,root:e2e-admin-key-0123456789:admin
           WEBHOOK_SECRET: e2e-webhook-secret
           MONTE_CARLO_RUNS: "2000"
           CORS_ORIGINS: http://localhost:3000

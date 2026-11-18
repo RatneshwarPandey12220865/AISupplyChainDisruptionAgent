@@ -26,9 +26,26 @@ export function setApiKey(key: string) {
   try { key ? localStorage.setItem(KEY_STORAGE, key) : localStorage.removeItem(KEY_STORAGE); } catch {}
 }
 
+// A username/password login yields a session token (sent as a Bearer token). An API key is the alternative credential.
+const SESSION_STORAGE = "sc_session";
+
+export function getSession(): string {
+  try { return localStorage.getItem(SESSION_STORAGE) ?? ""; } catch { return ""; }
+}
+export function setSession(token: string) {
+  try { token ? localStorage.setItem(SESSION_STORAGE, token) : localStorage.removeItem(SESSION_STORAGE); } catch {}
+}
+export function clearCredentials() {
+  setSession("");
+  setApiKey("");
+}
+
 export function authHeaders(extra?: HeadersInit): Record<string, string> {
+  const base = { ...(extra as Record<string, string>) };
+  const session = getSession();
+  if (session) return { ...base, Authorization: `Bearer ${session}` };
   const key = getApiKey();
-  return { ...(extra as Record<string, string>), ...(key ? { "X-API-Key": key } : {}) };
+  return { ...base, ...(key ? { "X-API-Key": key } : {}) };
 }
 
 export class ApiError extends Error {
@@ -52,6 +69,18 @@ export async function api<T = any>(path: string, init?: RequestInit): Promise<T>
 
 export const post = <T = any>(path: string, body: unknown = {}) =>
   api<T>(path, { method: "POST", body: JSON.stringify(body) });
+
+export const patch = <T = any>(path: string, body: unknown = {}) =>
+  api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+
+/** Username + password sign-in. On success the session token is stored and used for all later requests. */
+export async function loginWithPassword(username: string, password: string) {
+  const res = await post<{ token: string; user: { username: string; role: string } }>(
+    "/api/auth/login", { username, password });
+  setApiKey("");
+  setSession(res.token);
+  return res.user;
+}
 
 // ---------------------------------------------------------------------------------------------------------
 // Live updates over Server-Sent Events (fetch-based so we can send the API key header).
@@ -115,7 +144,7 @@ function ensureStream() {
   streamLoop();
 }
 
-/** Restart the stream, e.g. after the user entered a new API key. */
+/** Restart the stream, e.g. after the user signed in or out. */
 export function restartStream() {
   abort?.abort();
 }
